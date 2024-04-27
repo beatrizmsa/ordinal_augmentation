@@ -9,6 +9,7 @@ from torchvision.transforms import v2
 from time import time
 import data
 
+alpha = 1
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 ######################################### DATA #########################################
@@ -45,6 +46,21 @@ def none(images):
     labels = torch.randint(0, num_classes, [n], device=device)
     return images[range(len(images)), labels], labels
 
+def ordinal_mixup(images):
+    device = images.device
+    n = images.shape[0]
+    num_classes = images.shape[1]
+    lables = torch.zeros(num_classes)
+    class_1 = torch.randint(0,num_classes,[n], device=device)
+    class_2 = torch.randint(0,num_classes,[n], device=device)
+
+    beta = torch.distributions.beta.Beta(torch.tensor(alpha), torch.tensor(alpha))
+
+    labels[class_1] = beta.sample()
+    labels[class_2] = 1 - beta.sample()
+    
+    return 
+
 ######################################### LOOP #########################################
 
 criterion = torch.nn.CrossEntropyLoss()
@@ -57,7 +73,7 @@ tic = time()
 for it in range(nits):
     images = torch.stack([next(iter(d))[0] for d in ds_per_class], 1)
     images = images.to(device)
-    # images = (32, 7, 3, 224, 224) => (32, 3, 224, 224)
+    # images = (32, 7, 3, 224, 224) => (32, 7, 224, 224)
     images, labels = aug(images)
 
     preds = model(images)  # (N, K)
