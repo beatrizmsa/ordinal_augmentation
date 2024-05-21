@@ -1,4 +1,5 @@
 import argparse
+import math
 parser = argparse.ArgumentParser()
 parser.add_argument('augmentation')
 parser.add_argument('--tau', type=float, default=0.15)
@@ -97,14 +98,84 @@ def ordinal_exponential_mixup(images):
     mixup_images = torch.sum(images * labels[:, :, None, None, None], 1)
     return mixup_images, labels
 
-def each_nested(images):
-    # images: (7, 3, 224, 224)
-    pass
+def calcular_distance(H,W,area):
+    raiz_discriminante = math.sqrt((2*(H + W))**2 - 16* area)
+    distance = (-2*(H + W) + raiz_discriminante) / - 8
+    return distance
 
-def nested(batch_images):
-    # images: (32, 7, 3, 224, 224)
-    return torch.stack([each_nested(images) for images in batch_images], 0)
+def each_nested(images, probabilities, x1, y1, x2, y2, output):
+    H, W = images.shape[2:]
+    for k in range(1, len(probabilities)):
+        w = int(W*sum(probabilities[k:]))
+        h = int(H*sum(probabilities[k:]))
+        x1 = torch.randint(x1, x2-w+1, ())
+        y1 = torch.randint(y1, y2-h+1, ())
+        x2 = x1+w
+        y2 = y1+h
+        output[:, y1:y2, x1:x2] = images[k][:, y1:y2, x1:x2]
 
+def vectorize(fn):
+    def f(batch_images):
+        result = [fn(images) for images in batch_images]
+        return torch.stack([r[0] for r in result], 0), torch.stack([r[1] for r in result], 0)
+    return f
+
+def normalize_each_nested(images):
+    output = images[0].clone()
+    num_classes = images.shape[0]
+    center_class = torch.randint(0, num_classes, [1], device=device)
+    probabilities = exp(num_classes, center_class, args.tau)[0]
+    
+    each_nested(images, probabilities, 0 , 0 , images[0].shape[2], images[0].shape[1], output)
+    return output, probabilities
+
+nested = vectorize(normalize_each_nested)
+
+def random_ranges(intervals):
+    intervals = [(v1, v2) for v1, v2 in intervals if v2 > v1]
+    total_size = sum(v2-v1 for v1, v2 in intervals)
+    r = intervals[0][0] + torch.randint(0, total_size, ())
+    for (_, i1), (i2, _) in zip(intervals, intervals[1:]):
+        # invalid interval, pass through
+        r[r >= i1] = r[r >= i1] + (i2-i1)
+    return r
+
+def intersects(x1, y1, w1, h1, x2, y2, w2, h2):
+    return not (x1 + w1 <= x2 or x2 + w2 <= x1 or y1 + h1 <= y2 or y2 + h2 <= y1)
+
+def jaime_ordinal_cutmix(images, probabilities, center):
+    output = images[center].clone()
+
+    H, W = output.shape[1:]
+    wl = int(W * sum(probabilities[:center]))
+    hl = int(H * sum(probabilities[:center]))
+    wr = int(W * sum(probabilities[center + 1:]))
+    hr = int(H * sum(probabilities[center + 1:]))
+
+    while True:
+        restrict_x = torch.rand(()) < 0.5
+        x1_left = random_ranges([(0, W - wl - wr + 1), (wr, W - wl)]) if restrict_x and W - wl - wr + 1 < wr else torch.randint(0, W - wl, ())
+        y1_left = random_ranges([(0, H - hl - hr + 1), (hr, H - hl)]) if not restrict_x and H - hl - hr + 1 < hr else torch.randint(0, H - hl, ())
+        
+        x1_right = random_ranges([(0, x1_left - wr), (x1_left + wl, W - wr)]) if restrict_x else torch.randint(0, W - wr, ())
+        y1_right = random_ranges([(0, y1_left - wr), (y1_left + hl, H - hr)]) if not restrict_x else torch.randint(0, H - hr, ())
+        
+        if not intersects(x1_left, y1_left, wl, hl, x1_right, y1_right, wr, hr):
+            break
+
+    each_nested(images[:center], probabilities[:center], x1_left, y1_left, x1_left + wl, y1_left + hl, output)
+    each_nested(images[center + 1:], probabilities[center + 1:], x1_right, y1_right, x1_right + wr, y1_right + hr, output)
+    
+    return output
+
+def normalize_jaime_ordinal_cutmix(images):
+    num_classes = images.shape[0]
+    center_class = torch.randint(0, num_classes, [1], device=device)
+    probabilities = exp(num_classes, center_class, args.tau)[0]
+    output = jaime_ordinal_cutmix(images, probabilities, center_class[0])
+    return output, probabilities
+
+jaime = vectorize(normalize_jaime_ordinal_cutmix)
 
 # TODO:
 # - nested
