@@ -13,7 +13,7 @@
 
 # about half an hour per method
 
-DATASET="Smear"
+DATASET="Adience"
 METHODS="none mixup ordinal_adjacent_mixup ordinal_exponential_mixup nested jaime"
 for METHOD in $METHODS; do
     echo "python train.py $DATASET $METHOD"
