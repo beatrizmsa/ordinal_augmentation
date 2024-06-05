@@ -15,6 +15,7 @@ class Smear:
             if fname.endswith('.BMP')]
         self.labels = [self.classes.index(klass) for klass, _ in self.files]
         self.transform = transform
+        self.only_labels = False
 
     def __len__(self):
         return len(self.files)
@@ -22,6 +23,8 @@ class Smear:
     def __getitem__(self, i):
         dname, fname = self.files[i]
         label = self.labels[i]
+        if self.only_labels:
+            return fname, label
         image = imread(os.path.join(self.root, dname, fname))
         if self.transform:
             image = self.transform(image)
@@ -48,13 +51,16 @@ class Adience:
         self.files = [(row[header_list[2]], row[header_list[1]]) for _, row in df.iterrows() if row[header_list[2]] in self.classes]
         self.labels = [self.classes.index(klass) for klass, _ in self.files]
         self.transform = transform
+        self.only_labels = False
 
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, i):
-        _,fname = self.files[i]
+        _, fname = self.files[i]
         label = self.labels[i]
+        if self.only_labels:
+            return fname, label
         image = imread(os.path.join(self.root,fname))
         if self.transform:
             image = self.transform(image)

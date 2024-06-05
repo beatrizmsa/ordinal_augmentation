@@ -4,7 +4,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('dataset')
 parser.add_argument('augmentation')
 parser.add_argument('--tau', type=float, default=0.15)
-parser.add_argument('--epochs', type=int, default=100)
+parser.add_argument('--epochs', type=int, default=10)
 parser.add_argument('--batchsize', type=int, default=32)
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
@@ -39,7 +39,10 @@ tr, _ = torch.utils.data.random_split(ds, [0.8, 0.2], torch.Generator().manual_s
 
 # since we want to do augmentation across all the labels, we want to iterate across
 # images from each class at the same time
+print('Split by classes...')
+ds.only_labels = True
 tr_labels = [tr[i][1] for i in range(len(tr))]
+ds.only_labels = False
 tr_per_class = [torch.utils.data.Subset(tr, [i for i, l in enumerate(tr_labels) if l == k]) for k in range(ds.num_classes)]
 tr_per_class = [torch.utils.data.DataLoader(d, args.batchsize, True, pin_memory=True) for d in tr_per_class]  # , num_workers=4
 

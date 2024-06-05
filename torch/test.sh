@@ -13,8 +13,8 @@
 
 # about half an hour per method
 
-DATASET="Smear"
-METHODS=" model-Smear-none.pth model-Smear-mixup.pth model-Smear-ordinal_adjacent_mixup.pth model-Smear-ordinal_exponential_mixup.pth model-Smear-nested.pth model-Smear-jaime.pth"
+DATASET="Adience"
+METHODS=" model-Adience-none.pth model-Adience-mixup.pth model-Adience-ordinal_adjacent_mixup.pth model-Adience-ordinal_exponential_mixup.pth model-Adience-nested.pth model-Adience-jaime.pth"
 for METHOD in $METHODS; do
     echo "python test.py $METHOD $DATASET "
     python -u test.py  $METHOD $DATASET 
