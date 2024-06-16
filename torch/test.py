@@ -1,7 +1,6 @@
 import argparse
 import torch
-import torchvision
-import torchmetrics
+import torchmetrics # type: ignore
 from torchvision.transforms import v2
 import data
 
