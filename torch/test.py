@@ -20,7 +20,7 @@ transforms = v2.Compose([
     v2.ToDtype(torch.float32, scale=True),
 ])
 
-ds = getattr(data, args.dataset)(r"C:\Users\TheiaPC\repo_git\data", transforms)
+ds = getattr(data, args.dataset)('/nas-ctm01/homes/bmsa/data', transforms) # ,r"C:\Users\TheiaPC\repo_git\data"
 _, ts = torch.utils.data.random_split(ds, [0.8, 0.2], torch.Generator().manual_seed(42))
 ts = torch.utils.data.DataLoader(ts, 32, True, pin_memory=True)
 
@@ -32,7 +32,7 @@ model = torch.load(args.model, map_location=device)
 
 metrics = [
     torchmetrics.Accuracy(task="multiclass", num_classes=ds.num_classes).to(device),
-    torchmetrics.MAE().to(device),
+    torchmetrics.MeanAbsoluteError().to(device),
     torchmetrics.CohenKappa(task="multiclass", num_classes=ds.num_classes).to(device),
 ]
 
