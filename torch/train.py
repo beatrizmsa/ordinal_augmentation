@@ -4,7 +4,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('dataset')
 parser.add_argument('augmentation')
 parser.add_argument('--tau', type=float, default=0.15)
-parser.add_argument('--epochs', type=int, default=10)
+parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--batchsize', type=int, default=32)
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
@@ -34,7 +34,7 @@ transforms = v2.Compose([
     v2.ToDtype(torch.float32, scale=True),
 ])
 
-ds = ds('/nas-ctm01/homes/bmsa/data', transforms)
+ds = ds(r"C:\Users\TheiaPC\repo_git\data", transforms)
 tr, _ = torch.utils.data.random_split(ds, [0.8, 0.2], torch.Generator().manual_seed(42))
 
 # since we want to do augmentation across all the labels, we want to iterate across
@@ -57,6 +57,13 @@ model.to(device)
 def exp(num_classes, center_class, tau, device):
     x = torch.arange(num_classes, dtype=torch.float, device= device)
     return torch.nn.functional.softmax(-torch.abs(center_class[:, None] - x[None, :]) / tau, 1)
+
+def poisson_probs(num_classes, target_class, tau, device):
+    # https://proceedings.mlr.press/v70/beckham17a/beckham17a.pdf
+    _lambda = target_class[:, None]+0.5  # to ensure mode falls only on this class
+    j = torch.arange(num_classes, dtype=torch.float, device=device)[None]
+    log_pmf = j*torch.log(_lambda) - _lambda - torch.lgamma(j+1)
+    return torch.softmax(log_pmf/tau, 1)
 
 def none(images):  # images.shape = [N, K]. return.shape = [N]
     device = images.device
@@ -136,7 +143,7 @@ def normalize_each_nested(images):
     output = images[0].clone()
     num_classes = images.shape[0]
     center_class = torch.randint(0, num_classes, [1], device=device)
-    probabilities = exp(num_classes, center_class, args.tau, device)[0]
+    probabilities = poisson_probs(num_classes, center_class, args.tau, device)[0]
     
     each_nested(images, probabilities, 0 , 0 , images[0].shape[2], images[0].shape[1], output)
     return output, probabilities
@@ -184,7 +191,7 @@ def normalize_jaime_ordinal_cutmix(images):
     device = images.device
     num_classes = images.shape[0]
     center_class = torch.randint(0, num_classes, [1], device=device)
-    probabilities = exp(num_classes, center_class, args.tau,device)[0]
+    probabilities = poisson_probs(num_classes, center_class, args.tau,device)[0]
     output = jaime_ordinal_cutmix(images, probabilities, center_class[0])
     return output, probabilities
 
@@ -238,16 +245,3 @@ for it in range(nits):
         tic = time()
 
 torch.save(model, f'model-{args.dataset}-{args.augmentation}.pth')
-
-'''
-import torchmetrics
-
-acc = torchmetrics.Accuracy(...)
-
-for images, labels in ts:
-    with torch.no_grad():
-        preds = model(images)
-    acc.update(preds.argmax(1), labels)
-print(acc.compute())
-'''
-

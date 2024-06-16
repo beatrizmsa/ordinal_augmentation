@@ -1,6 +1,10 @@
+import numpy as np
 from skimage.io import imread
+import torchvision
 import pandas as pd
 import os
+
+import torch
 
 class Smear:
     # https://mde-lab.aegean.gr/index.php/downloads/
@@ -105,6 +109,39 @@ class TxtToCsvConverter:
         df = df.drop(index=existing_files)
 
         return df
+
+class ImageDataset(torch.utils.data.Dataset):
+    modality = 'image'
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, i, only_labels=False):
+        fname = self.files[i]
+        label = self.labels[i]
+        if only_labels:
+            return label
+        if fname.lower().endswith('.tif') or fname.lower().endswith('.bmp'):
+            img = imread(fname).astype(np.uint8)
+            img = np.moveaxis(img, 2, 0)
+            img = torch.tensor(img)
+        else:
+            img = torchvision.io.read_image(fname, torchvision.io.ImageReadMode.RGB)
+        if self.transform:
+            img = self.transform(img)
+        return img, label
+    
+class HCI(ImageDataset):
+    # http://graphics.cs.cmu.edu/projects/historicalColor/
+    allow_vflips = True
+    num_classes = 5
+    classes = ['1930s','1940s','1950s', '1960s','1970s']
+    def __init__(self, root, transform=None):
+        root = os.path.join(root, 'HistoricalColor-ECCV2012', 'data', 'imgs', 'decade_database')
+        decades = sorted(os.listdir(root))
+        self.files = [os.path.join(root, d, f) for d in decades for f in sorted(os.listdir(os.path.join(root, d))) if not f.startswith('.')]
+        self.labels = [i for i, d in enumerate(decades) for f in sorted(os.listdir(os.path.join(root, d))) if not f.startswith('.')]
+        self.transform = transform
 
 if __name__ == '__main__':
     ds = Adience('/nas-ctm01/homes/bmsa/data')
