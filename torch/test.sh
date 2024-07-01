@@ -13,10 +13,12 @@
 
 # about half an hour per method
 
-DATASET="Adience"
-METHODS=" model-Adience-none.pth model-Adience-mixup.pth model-Adience-ordinal_adjacent_mixup.pth model-Adience-ordinal_exponential_mixup.pth model-Adience-nested.pth model-Adience-jaime.pth"
+DATASET="Smear"
+METHODS=" model-Smear-none.pth model-Smear-mixup.pth model-Smear-ordinal_adjacent_mixup.pth model-Smear-ordinal_exponential_mixup.pth model-Smear-cutmix.pth model-Smear-nested.pth model-Smear-jaime.pth"
 for METHOD in $METHODS; do
-    echo "python test.py $METHOD $DATASET "
-    python -u test.py  $METHOD $DATASET 
+        echo "test the dataset $DATASET with method $METHOD"
+        echo "- with the train: tau in descent order and 200 epochs and latent space"
+        python -u test.py  $METHOD $DATASET 
 done
 # rm slurm.txt; sbatch ./train.sh
+#model-Smear-jaime.pth

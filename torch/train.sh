@@ -13,11 +13,13 @@
 
 # about half an hour per method
 
-DATASET="Adience"
-METHODS="mixup ordinal_adjacent_mixup ordinal_exponential_mixup nested jaime"
-for METHOD in $METHODS; do
-    echo "python train.py $DATASET $METHOD"
-    python -u train.py $DATASET $METHOD
+DATASETS="Smear"
+METHODS="jaime"
+for DATASET in $DATASETS; do 
+    for METHOD in $METHODS; do
+        echo "train the dataset $DATASET with method $METHOD, tau in descent order ,200 epochs and latent space"
+        python -u train.py $DATASET $METHOD --latent-aug
+    done
 done
 
 # DATASET="Adience"

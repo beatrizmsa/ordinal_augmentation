@@ -1,10 +1,9 @@
 import argparse
-import math
 parser = argparse.ArgumentParser()
 parser.add_argument('dataset')
 parser.add_argument('augmentation')
-parser.add_argument('--tau', type=float, default=0.15)
-parser.add_argument('--epochs', type=int, default=100)
+parser.add_argument('--latent-aug', action='store_true')
+parser.add_argument('--epochs', type=int, default=200)
 parser.add_argument('--batchsize', type=int, default=32)
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
@@ -34,17 +33,17 @@ transforms = v2.Compose([
     v2.ToDtype(torch.float32, scale=True),
 ])
 
-ds = ds(r"C:\Users\TheiaPC\repo_git\data", transforms)
+ds = ds('/nas-ctm01/homes/bmsa/data', transforms)
 tr, _ = torch.utils.data.random_split(ds, [0.8, 0.2], torch.Generator().manual_seed(42))
 
 # since we want to do augmentation across all the labels, we want to iterate across
 # images from each class at the same time
-print('Split by classes...')
+print('Splitting by classes...')
 ds.only_labels = True
 tr_labels = [tr[i][1] for i in range(len(tr))]
 ds.only_labels = False
 tr_per_class = [torch.utils.data.Subset(tr, [i for i, l in enumerate(tr_labels) if l == k]) for k in range(ds.num_classes)]
-tr_per_class = [torch.utils.data.DataLoader(d, args.batchsize, True, pin_memory=True) for d in tr_per_class]  # , num_workers=4
+tr_per_class = [torch.utils.data.DataLoader(d, args.batchsize, True, pin_memory=True) for d in tr_per_class]
 
 ######################################### MODEL #########################################
 
@@ -65,14 +64,14 @@ def poisson_probs(num_classes, target_class, tau, device):
     log_pmf = j*torch.log(_lambda) - _lambda - torch.lgamma(j+1)
     return torch.softmax(log_pmf/tau, 1)
 
-def none(images):  # images.shape = [N, K]. return.shape = [N]
+def none(images, tau):  # images.shape = [N, K]. return.shape = [N]
     device = images.device
     n = images.shape[0]
     num_classes = images.shape[1]
     labels = torch.randint(0, num_classes, [n], device=device)
     return images[range(n), labels], labels
 
-def mixup(images):
+def mixup(images, tau):
     device = images.device
     n = images.shape[0]
     num_classes = images.shape[1]
@@ -89,7 +88,34 @@ def mixup(images):
     mixup_images = torch.sum(images * labels[:, :, None, None, None], 1)
     return mixup_images, labels
 
-def ordinal_adjacent_mixup(images):
+def normalize_cutmix(images,tau):
+    device = images.device
+    num_classes = images.shape[0]
+    labels = torch.zeros((num_classes), device=device)
+    class_1 = torch.randint(0, num_classes, [], device=device)
+    class_2 = torch.randint(0, num_classes-1, [], device=device)
+
+    class_2[class_2 >= class_1] = 1 + class_2[class_2 >= class_1]
+
+    lamba = torch.distributions.beta.Beta(torch.tensor(alpha), torch.tensor(alpha))
+    temp = lamba.sample().to(device)
+    labels[class_1] = temp
+    labels[class_2] = 1-temp
+
+    H, W = images.shape[2:]
+    
+    rw = int(W * torch.sqrt(1 - temp))
+    rh = int(H * torch.sqrt(1 - temp))
+    rx = torch.randint(0, W - rw,())
+    ry = torch.randint(0, H - rh, ())
+
+    output = images[class_1].clone()
+
+    output[:, ry:ry+rh, rx:rx+rw] = images[class_2][:, ry:ry+rh, rx:rx+rw]
+
+    return output, labels
+
+def ordinal_adjacent_mixup(images, tau):
     device = images.device
     n = images.shape[0]
     num_classes = images.shape[1]
@@ -105,21 +131,17 @@ def ordinal_adjacent_mixup(images):
     mixup_images = torch.sum(images * labels[:, :, None, None, None], 1)
     return mixup_images, labels
 
-def ordinal_exponential_mixup(images):
+def ordinal_exponential_mixup(images, tau):
     device = images.device
     n = images.shape[0]
     num_classes = images.shape[1]
 
     labels = torch.randint(0, num_classes, [n], device=device) + 1
-    labels = exp(num_classes, labels, args.tau, device)
+    labels = poisson_probs(num_classes, labels, tau, device)
 
     mixup_images = torch.sum(images * labels[:, :, None, None, None], 1)
     return mixup_images, labels
 
-def calcular_distance(H,W,area):
-    raiz_discriminante = math.sqrt((2*(H + W))**2 - 16* area)
-    distance = (-2*(H + W) + raiz_discriminante) / - 8
-    return distance
 
 def each_nested(images, probabilities, x1, y1, x2, y2, output):
     H, W = images.shape[2:]
@@ -133,31 +155,21 @@ def each_nested(images, probabilities, x1, y1, x2, y2, output):
         output[:, y1:y2, x1:x2] = images[k][:, y1:y2, x1:x2]
 
 def vectorize(fn):
-    def f(batch_images):
-        result = [fn(images) for images in batch_images]
+    def f(batch_images, tau):
+        result = [fn(images, tau) for images in batch_images]
         return torch.stack([r[0] for r in result], 0), torch.stack([r[1] for r in result], 0)
     return f
 
-def normalize_each_nested(images):
+def normalize_each_nested(images, tau):
     device = images.device
     output = images[0].clone()
     num_classes = images.shape[0]
     center_class = torch.randint(0, num_classes, [1], device=device)
-    probabilities = poisson_probs(num_classes, center_class, args.tau, device)[0]
+    probabilities = poisson_probs(num_classes, center_class, tau, device)[0]
     
     each_nested(images, probabilities, 0 , 0 , images[0].shape[2], images[0].shape[1], output)
     return output, probabilities
 
-nested = vectorize(normalize_each_nested)
-
-def random_ranges(intervals):
-    intervals = [(v1, v2) for v1, v2 in intervals if v2 > v1]
-    total_size = sum(v2-v1 for v1, v2 in intervals)
-    r = intervals[0][0] + torch.randint(0, total_size, ())
-    for (_, i1), (i2, _) in zip(intervals, intervals[1:]):
-        # invalid interval, pass through
-        r[r >= i1] = r[r >= i1] + (i2-i1)
-    return r
 
 def intersects(x1, y1, w1, h1, x2, y2, w2, h2):
     return not (x1 + w1 <= x2 or x2 + w2 <= x1 or y1 + h1 <= y2 or y2 + h2 <= y1)
@@ -172,67 +184,91 @@ def jaime_ordinal_cutmix(images, probabilities, center):
     hr = int(H * sum(probabilities[center + 1:]))
 
     while True:
-        restrict_x = torch.rand(()) < 0.5
-        x1_left = random_ranges([(0, W - wl - wr + 1), (wr, W - wl)]) if restrict_x and W - wl - wr + 1 < wr else torch.randint(0, W - wl, ())
-        y1_left = random_ranges([(0, H - hl - hr + 1), (hr, H - hl)]) if not restrict_x and H - hl - hr + 1 < hr else torch.randint(0, H - hl, ())
+        x1_left = torch.randint(0, W - wl, ())
+        y1_left = torch.randint(0, H - hl, ())
         
-        x1_right = random_ranges([(0, x1_left - wr), (x1_left + wl, W - wr)]) if restrict_x else torch.randint(0, W - wr, ())
-        y1_right = random_ranges([(0, y1_left - wr), (y1_left + hl, H - hr)]) if not restrict_x else torch.randint(0, H - hr, ())
+        x1_right = torch.randint(0, W - wr, ())
+        y1_right = torch.randint(0, H - hr, ())
         
         if not intersects(x1_left, y1_left, wl, hl, x1_right, y1_right, wr, hr):
             break
 
-    each_nested(images[:center], probabilities[:center], x1_left, y1_left, x1_left + wl, y1_left + hl, output)
-    each_nested(images[center + 1:], probabilities[center + 1:], x1_right, y1_right, x1_right + wr, y1_right + hr, output)
-    
+    imag = images[:center + 1].tolist()
+    imag = torch.tensor(imag[::-1])
+    prob = probabilities[:center + 1].tolist()
+    prob = torch.tensor(prob[::-1])
+    each_nested(imag, prob, x1_left, y1_left, x1_left + wl, y1_left + hl, output)
+    each_nested(images[center:], probabilities[center:], x1_right, y1_right, x1_right + wr, y1_right + hr, output)
+
     return output
 
-def normalize_jaime_ordinal_cutmix(images):
+def normalize_jaime_ordinal_cutmix(images, tau):
     device = images.device
     num_classes = images.shape[0]
     center_class = torch.randint(0, num_classes, [1], device=device)
-    probabilities = poisson_probs(num_classes, center_class, args.tau,device)[0]
+    probabilities = poisson_probs(num_classes, center_class,tau,device)[0]
     output = jaime_ordinal_cutmix(images, probabilities, center_class[0])
     return output, probabilities
 
+nested = vectorize(normalize_each_nested)
 jaime = vectorize(normalize_jaime_ordinal_cutmix)
-
-# TODO:
-# - nested
-# - jaime
+cutmix = vectorize(normalize_cutmix)
 
 ######################################### LOOP #########################################
 
 print('Training...')
 criterion = torch.nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(model.parameters())
+optimizer1 = torch.optim.Adam(model.fc.parameters())
+optimizer2 = torch.optim.Adam(set(model.parameters()) - set(model.fc.parameters()), 1e-4)
 aug = globals()[args.augmentation]
 
 nits = int(round(len(tr) * args.epochs / args.batchsize))
 nprint = len(tr) // args.batchsize
 avg_loss = avg_acc = 0
 tic = time()
+
 for it in range(nits):
+    tau = (1-(it+1)/nits)*1 + 0.00001
+
     images = torch.stack([next(iter(d))[0] for d in tr_per_class], 1)
     images = images.to(device)
-    old_images = images
-    # images: input (32, 7, 3, 224, 224) => output (32, 3, 224, 224)
-    images, labels = aug(images)
-    #print('images:', images.min(), images.max(), 'labels:', labels)
 
+    if not args.latent_aug:
+        
+        old_images = images
+        # images: input (32, 7, 3, 224, 224) => output (32, 3, 224, 224)
+        images, labels = aug(images, tau)
+        #print('images:', images.min(), images.max(), 'labels:', labels)
+        preds = model(images)
+    
     if args.debug:
-        plt.subplot(2, 7, 1)
+        plt.subplot(2, ds.num_classes, 1)
         plt.imshow(images[0].permute(1, 2, 0))
-        for k in range(7):
-            plt.subplot(2, 7, k+8)
+        for k in range(ds.num_classes):
+            plt.subplot(2, ds.num_classes, k+ds.num_classes+1)
             plt.imshow(old_images[0, k].permute(1, 2, 0))
         plt.show()
 
-    preds = model(images)  # (N, K)
+    if args.latent_aug:
+        # images.shape = (32, 7, 3, 224, 224)
+        x = images.reshape(-1, 3, 224, 224)  # images.shape = (32*7, 3, 224, 224)
+        for layer in list(model.children())[:-1]:
+            x = layer(x)
+        x = x.reshape(images.shape[0], images.shape[1], *x.shape[1:])
+        x.to(device)
+        x, labels = aug(x, tau)
+
+        x = torch.mean(x, (2, 3))
+        preds = model.fc(x)
+
+
     loss = criterion(preds, labels)
-    optimizer.zero_grad()
+    optimizer1.zero_grad()
+    optimizer2.zero_grad()
     loss.backward()
-    optimizer.step()
+    optimizer1.step()
+    optimizer2.step()
+    
     avg_loss += float(loss) / len(tr)
     if len(labels.shape) == 2:
         labels = labels.argmax(1)
